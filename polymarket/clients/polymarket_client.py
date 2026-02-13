@@ -469,12 +469,18 @@ class PolymarketClient:
             
             # Build URL
             url = build_market_url(str(market_id), "polymarket")
-            
+
             # Extract order book data if available
-            yes_bid = data.get("yes_bid")
-            no_bid = data.get("no_bid")
-            yes_ask = data.get("yes_ask")
-            no_ask = data.get("no_ask")
+            # Polymarket API returns bestBid and bestAsk for YES outcome
+            best_bid = data.get("bestBid")
+            best_ask = data.get("bestAsk")
+
+            # For binary markets: YES bid/ask from API, NO is derived
+            yes_bid = float(best_bid) if best_bid is not None else None
+            yes_ask = float(best_ask) if best_ask is not None else None
+            # NO prices are inverse: if YES bid = 0.6, then NO ask = 0.4
+            no_bid = (1.0 - yes_ask) if yes_ask is not None else None
+            no_ask = (1.0 - yes_bid) if yes_bid is not None else None
             
             return MarketEvent(
                 source="polymarket",
@@ -490,10 +496,10 @@ class PolymarketClient:
                 close_time=close_time,
                 last_updated=datetime.utcnow(),
                 url=url,
-                yes_bid=float(yes_bid) if yes_bid is not None else None,
-                no_bid=float(no_bid) if no_bid is not None else None,
-                yes_ask=float(yes_ask) if yes_ask is not None else None,
-                no_ask=float(no_ask) if no_ask is not None else None,
+                yes_bid=yes_bid,
+                no_bid=no_bid,
+                yes_ask=yes_ask,
+                no_ask=no_ask,
             )
         except Exception as e:
             print(f"[WARN] Error parsing Polymarket market: {e}")

@@ -58,6 +58,13 @@ DATA_RETENTION_HOURS = int(os.getenv("DATA_RETENTION_HOURS", "24"))
 # Volume Filter
 MIN_VOLUME = float(os.getenv("MIN_VOLUME", "250000.0"))  # Minimum market volume in USD
 
+# Spread Filter (orderbook depth)
+MAX_SPREAD = float(os.getenv("MAX_SPREAD", "0.10"))  # Maximum bid-ask spread (0.05 = 5%)
+
+# Platform Toggles
+ENABLE_POLYMARKET = os.getenv("ENABLE_POLYMARKET", "true").lower() == "true"
+ENABLE_KALSHI = os.getenv("ENABLE_KALSHI", "true").lower() == "true"
+
 # Event Tracking
 TRACK_EVENT_SLUG = os.getenv("TRACK_EVENT_SLUG", "")
 MIN_TRADE_USD = float(os.getenv("MIN_TRADE_USD", "1000.0"))

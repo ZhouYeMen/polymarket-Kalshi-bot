@@ -52,3 +52,14 @@ class MarketEvent:
     def get_unique_id(self) -> str:
         """Get a unique identifier combining source and market_id."""
         return f"{self.source}:{self.market_id}"
+
+    def get_spread(self) -> Optional[float]:
+        """Calculate bid-ask spread if orderbook data is available.
+
+        Returns:
+            Spread as a decimal (e.g., 0.03 for 3% spread), or None if unavailable
+        """
+        if self.yes_bid is not None and self.yes_ask is not None:
+            spread = self.yes_ask - self.yes_bid
+            return max(0.0, spread)  # Ensure non-negative
+        return None

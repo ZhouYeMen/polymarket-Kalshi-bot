@@ -256,6 +256,11 @@ class MarketMonitor:
 
     async def poll_polymarket(self) -> None:
         """Poll Polymarket for market updates."""
+        # Skip if Polymarket is disabled
+        if not config.ENABLE_POLYMARKET:
+            self.notifier.notify_status("Polymarket monitoring disabled", style="dim")
+            return
+
         while self.running:
             try:
                 self.notifier.notify_status(
@@ -266,11 +271,21 @@ class MarketMonitor:
                 # Fetch all active markets (geopolitics only via tag_slug)
                 markets = await self.polymarket_client.fetch_all_active_markets(geopolitics_only=True)
 
-                # Filter by minimum volume
-                vol_markets = [
-                    m for m in markets
-                    if m.volume is not None and m.volume >= config.MIN_VOLUME
-                ]
+                # Filter by minimum volume and maximum spread
+                filtered_markets = []
+                for m in markets:
+                    # Volume filter
+                    if m.volume is None or m.volume < config.MIN_VOLUME:
+                        continue
+
+                    # Spread filter (orderbook depth)
+                    spread = m.get_spread()
+                    if spread is not None and spread > config.MAX_SPREAD:
+                        continue
+
+                    filtered_markets.append(m)
+
+                vol_markets = filtered_markets
 
                 self.notifier.notify_status(
                     f"Found {len(vol_markets)} geopolitical markets on Polymarket with >${config.MIN_VOLUME/1000:.0f}K volume "
@@ -295,6 +310,11 @@ class MarketMonitor:
 
     async def poll_kalshi(self) -> None:
         """Poll Kalshi for market updates."""
+        # Skip if Kalshi is disabled
+        if not config.ENABLE_KALSHI:
+            self.notifier.notify_status("Kalshi monitoring disabled", style="dim")
+            return
+
         while self.running:
             try:
                 self.notifier.notify_status(
@@ -305,11 +325,21 @@ class MarketMonitor:
                 # Fetch geopolitical markets (Politics + World categories)
                 markets = await self.kalshi_client.fetch_all_active_markets(geopolitics_only=True)
 
-                # Filter by minimum volume
-                vol_markets = [
-                    m for m in markets
-                    if m.volume is not None and m.volume >= config.MIN_VOLUME
-                ]
+                # Filter by minimum volume and maximum spread
+                filtered_markets = []
+                for m in markets:
+                    # Volume filter
+                    if m.volume is None or m.volume < config.MIN_VOLUME:
+                        continue
+
+                    # Spread filter (orderbook depth)
+                    spread = m.get_spread()
+                    if spread is not None and spread > config.MAX_SPREAD:
+                        continue
+
+                    filtered_markets.append(m)
+
+                vol_markets = filtered_markets
 
                 self.notifier.notify_status(
                     f"Found {len(vol_markets)} geopolitical markets on Kalshi with >${config.MIN_VOLUME/1000:.0f}K volume "
