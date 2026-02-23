@@ -26,6 +26,28 @@ python main.py ukraine-conflict       # also track a specific event for large tr
 
 ---
 
+## How to Transfer to Another Computer
+
+To run this bot on a new computer, follow these steps:
+
+1.  **Transfer the folder** or **Clone from GitHub**:
+    ```bash
+    git clone https://github.com/ZhouYeMen/polymarket-Kalshi-bot
+    ```
+2.  **Install dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  **Restore/Create your .env file**:
+    - If you *transferred* the folder, make sure the hidden `.env` file came with it.
+    - If you *cloned* from GitHub, copy the example: `cp .env.example .env` and fill in your Token and IDs.
+4.  **Run the bot**:
+    ```bash
+    python3 telegram_bot.py
+    ```
+
+---
+
 ## Project Structure
 
 ```
@@ -336,6 +358,9 @@ All configuration is in `config.py` and can be overridden via a `.env` file or e
 | **Telegram** | | |
 | `TELEGRAM_BOT_TOKEN` | `""` | Telegram bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | `""` | Target Telegram chat/channel ID |
+| `TELEGRAM_MESSAGE_THREAD_ID` | `""` | Topic/thread ID (0 or empty = General) |
+| `TELEGRAM_SCHEDULE_HOUR` | `12` | Hour to send daily screener (0-23 local time) |
+| `TELEGRAM_ALLOWED_CHATS` | `""` | Comma-separated list of authorized chat/user IDs |
 | `TELEGRAM_RATE_LIMIT` | `1.0` | Max Telegram messages per second |
 | `TELEGRAM_SEND_STATUS` | `false` | Send status messages to Telegram (not just alerts) |
 | **Kalshi Auth** | | |
