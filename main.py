@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import signal
 import sys
+import traceback
 
 import config
 from clients.polymarket_client import PolymarketClient
@@ -502,6 +503,10 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nGoodbye!")
-    except Exception as e:
-        print(f"\nFatal error: {e}")
+    except Exception:
+        print("\n" + "="*50)
+        print("FATAL ERROR ENCOUNTERED")
+        print("="*50)
+        traceback.print_exc()
+        print("="*50 + "\n")
         sys.exit(1)
