@@ -492,8 +492,13 @@ async def main():
         for task in monitor.poll_tasks:
             task.cancel()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _handle_signal)
+    if sys.platform != "win32":
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _handle_signal)
+            except NotImplementedError:
+                # Fallback for systems that don't support signal handlers
+                pass
 
     await monitor.run(track_event_slug=event_slug if event_slug else None)
 
