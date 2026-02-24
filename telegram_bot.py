@@ -14,6 +14,8 @@ from datetime import datetime, time, timedelta
 from typing import List, Optional, Set
 from functools import wraps
 
+import pytz
+
 import aiohttp
 import certifi
 
@@ -387,14 +389,22 @@ def main() -> None:
     # Schedule daily screener
     job_queue = application.job_queue
     schedule_hour = config.TELEGRAM_SCHEDULE_HOUR
-    target_time = time(hour=schedule_hour, minute=0, second=0)
+    
+    # Use pytz to make the time timezone-aware
+    try:
+        tz = pytz.timezone(config.TELEGRAM_TIMEZONE)
+    except pytz.exceptions.UnknownTimeZoneError:
+        logger.warning("Unknown timezone '%s', defaulting to UTC", config.TELEGRAM_TIMEZONE)
+        tz = pytz.UTC
+
+    target_time = time(hour=schedule_hour, minute=0, second=0, tzinfo=tz)
 
     job_queue.run_daily(
         scheduled_screener,
         time=target_time,
         name="daily_screener",
     )
-    logger.info("Scheduled daily screener at %02d:00 local time", schedule_hour)
+    logger.info("Scheduled daily screener at %02d:00 %s time", schedule_hour, config.TELEGRAM_TIMEZONE)
 
     # Test mode: schedule a one-shot send ~2 minutes from now
     if test_mode:

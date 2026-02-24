@@ -107,6 +107,7 @@ TELEGRAM_SCHEDULE_HOUR = get_env_int("TELEGRAM_SCHEDULE_HOUR", "12")
 TELEGRAM_ALLOWED_CHATS = [
     c.strip() for c in os.getenv("TELEGRAM_ALLOWED_CHATS", "").split(",") if c.strip()
 ]
+TELEGRAM_TIMEZONE = os.getenv("TELEGRAM_TIMEZONE", "Asia/Singapore").strip()
 
 # Kalshi Authentication (if required)
 KALSHI_API_KEY = os.getenv("KALSHI_API_KEY", "").strip()
