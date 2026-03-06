@@ -110,8 +110,8 @@ async def generate_screener_images(tag_slug: Optional[str] = None) -> List[str]:
                 if not any(t in config.EXCLUDE_TAGS for t in m["tags"])
             ]
 
-        # Apply volume filter
-        min_vol = config.MIN_VOLUME
+        # Apply volume filter (screener uses its own threshold)
+        min_vol = config.SCREENER_MIN_VOLUME
         if min_vol > 0:
             markets = [m for m in markets if m["volume"] >= min_vol]
 

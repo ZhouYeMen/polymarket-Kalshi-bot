@@ -78,7 +78,11 @@ GEOPOLITICAL_KEYWORDS = [
 DATA_RETENTION_HOURS = get_env_int("DATA_RETENTION_HOURS", "24")
 
 # Volume Filter
-MIN_VOLUME = get_env_float("MIN_VOLUME", "250000.0")  # Minimum market volume in USD
+MIN_VOLUME = get_env_float("MIN_VOLUME", "250000.0")  # Minimum volume for main.py alerts
+SCREENER_MIN_VOLUME = get_env_float("SCREENER_MIN_VOLUME", "500000.0")  # Minimum volume for screener
+
+# Screener: max days a market can repeat in mover tables before deprioritized
+SCREENER_REPEAT_CAP = get_env_int("SCREENER_REPEAT_CAP", "3")
 
 # Spread Filter — exclude markets with bid-ask spread above this (0.05 = 5 cents)
 MAX_SPREAD = get_env_float("MAX_SPREAD", "0.0")  # 0 = disabled

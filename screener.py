@@ -15,6 +15,7 @@ Usage:
 import asyncio
 import ssl
 import json
+import os
 import sys
 import aiohttp
 import certifi
@@ -30,6 +31,104 @@ from rich import box
 import config
 
 console = Console()
+
+# ─── Shown-market persistence (deprioritize repeats) ─────────────────────────
+
+_SHOWN_FILE = os.path.join(
+    os.path.expanduser("~/.polymarket_monitor"),
+    "screener_shown.json",
+)
+
+
+def _load_shown_markets() -> Dict[str, int]:
+    """Load {slug: consecutive_days_shown} from disk."""
+    if not os.path.exists(_SHOWN_FILE):
+        return {}
+    try:
+        with open(_SHOWN_FILE, "r") as f:
+            data = json.load(f)
+        # Only keep entries from today or yesterday (stale entries auto-expire)
+        last_date = data.get("date", "")
+        today = date.today().isoformat()
+        if last_date == today:
+            return data.get("counts", {})
+        elif last_date == (date.today().replace(day=date.today().day)).isoformat():
+            # Same day, return as-is
+            return data.get("counts", {})
+        else:
+            # Different day — increment counts for markets that were shown
+            return data.get("counts", {})
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _save_shown_markets(shown_slugs: List[str]) -> None:
+    """Update shown counts: increment for shown markets, reset others."""
+    os.makedirs(os.path.dirname(_SHOWN_FILE), exist_ok=True)
+    old = _load_shown_markets()
+    today = date.today().isoformat()
+
+    # Check if this is a new day
+    old_date = ""
+    if os.path.exists(_SHOWN_FILE):
+        try:
+            with open(_SHOWN_FILE, "r") as f:
+                old_date = json.load(f).get("date", "")
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    new_counts = {}
+    for slug in shown_slugs:
+        if old_date == today:
+            # Same day — don't double-count, keep current count
+            new_counts[slug] = old.get(slug, 0)
+        else:
+            # New day — increment
+            new_counts[slug] = old.get(slug, 0) + 1
+
+    data = {"date": today, "counts": new_counts}
+    tmp = _SHOWN_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, _SHOWN_FILE)
+    except IOError:
+        pass
+
+
+def _get_repeat_penalty(slug: str) -> float:
+    """Return a multiplier (0.0-1.0) that penalizes repeat appearances.
+
+    Markets shown >= SCREENER_REPEAT_CAP consecutive days get 0.3x score.
+    Markets shown 1 day get 0.7x, 2 days get 0.5x, etc.
+    """
+    counts = _load_shown_markets()
+    days = counts.get(slug, 0)
+    cap = config.SCREENER_REPEAT_CAP
+    if days >= cap:
+        return 0.3
+    if days == 0:
+        return 1.0
+    # Linear decay: 1.0 → 0.3 over cap days
+    return 1.0 - (0.7 * days / cap)
+
+
+def _velocity_score_1d(m: Dict) -> float:
+    """Compute velocity score: abs(1d_change) × volume_1d, with repeat penalty."""
+    vol_1d = m.get("volume_1d") or 0
+    chg = abs(m["one_day_chg"])
+    raw = chg * vol_1d
+    penalty = _get_repeat_penalty(m.get("slug", m["title"]))
+    return raw * penalty
+
+
+def _velocity_score_7d(m: Dict) -> float:
+    """Compute velocity score: abs(7d_change) × volume_1w, with repeat penalty."""
+    vol_7d = m.get("volume_1w") or 0
+    chg = abs(m["one_week_chg"])
+    raw = chg * vol_7d
+    penalty = _get_repeat_penalty(m.get("slug", m["title"]))
+    return raw * penalty
 
 # Popular tags grouped by category for the --tags listing
 POPULAR_TAGS = {
@@ -453,21 +552,19 @@ def show_top_volume(markets: List[Dict], count: int = 30, target: Console = None
 
 def show_top_movers(markets: List[Dict], count: int = 15, target: Console = None) -> None:
     out = target or console
-    # Filter: meaningful price change, actively traded, and sufficient liquidity
-    # Exclude near-settled (YES <2% or >98%) and low-volume (<$500K) markets
     movers = [
         m for m in markets
         if abs(m["one_day_chg"]) > 0.001
         and 0.02 <= m["yes"] <= 0.98
-        and m["volume"] >= 500_000
+        and m["volume"] >= config.SCREENER_MIN_VOLUME
     ]
-    sorted_movers = sorted(movers, key=lambda m: abs(m["one_day_chg"]), reverse=True)[:count]
+    sorted_movers = sorted(movers, key=_velocity_score_1d, reverse=True)[:count]
 
     if not sorted_movers:
         return
 
     table = Table(
-        title="[bold]Top Movers 24H (Price Change)[/bold]",
+        title="[bold]Top Movers 24H (Velocity: Change × Volume)[/bold]",
         title_style="bold white",
         box=box.SIMPLE_HEAVY,
         show_lines=False,
@@ -479,7 +576,7 @@ def show_top_movers(markets: List[Dict], count: int = 15, target: Console = None
     table.add_column("Market", ratio=1)
     table.add_column("YES", justify="right", width=6)
     table.add_column("1D Chg", justify="right", width=7)
-    table.add_column("Volume", justify="right", width=8)
+    table.add_column("1D Vol", justify="right", width=8)
     table.add_column("Dir", justify="center", width=5)
 
     for i, m in enumerate(sorted_movers, 1):
@@ -491,7 +588,7 @@ def show_top_movers(markets: List[Dict], count: int = 15, target: Console = None
             m["title"],
             Text(fmt_pct(m["yes"]), style="white"),
             fmt_chg(m["one_day_chg"]),
-            Text(fmt_vol(m["volume"]), style="yellow"),
+            Text(fmt_vol(m.get("volume_1d") or 0), style="yellow"),
             direction,
         )
 
@@ -504,15 +601,15 @@ def show_top_movers_7d(markets: List[Dict], count: int = 15, target: Console = N
         m for m in markets
         if abs(m["one_week_chg"]) > 0.001
         and 0.02 <= m["yes"] <= 0.98
-        and m["volume"] >= 500_000
+        and m["volume"] >= config.SCREENER_MIN_VOLUME
     ]
-    sorted_movers = sorted(movers, key=lambda m: abs(m["one_week_chg"]), reverse=True)[:count]
+    sorted_movers = sorted(movers, key=_velocity_score_7d, reverse=True)[:count]
 
     if not sorted_movers:
         return
 
     table = Table(
-        title="[bold]Top Movers 7D (Price Change)[/bold]",
+        title="[bold]Top Movers 7D (Velocity: Change × Volume)[/bold]",
         title_style="bold white",
         box=box.SIMPLE_HEAVY,
         show_lines=False,
@@ -524,7 +621,7 @@ def show_top_movers_7d(markets: List[Dict], count: int = 15, target: Console = N
     table.add_column("Market", ratio=1)
     table.add_column("YES", justify="right", width=6)
     table.add_column("7D Chg", justify="right", width=7)
-    table.add_column("Volume", justify="right", width=8)
+    table.add_column("7D Vol", justify="right", width=8)
     table.add_column("Dir", justify="center", width=5)
 
     for i, m in enumerate(sorted_movers, 1):
@@ -536,7 +633,7 @@ def show_top_movers_7d(markets: List[Dict], count: int = 15, target: Console = N
             m["title"],
             Text(fmt_pct(m["yes"]), style="white"),
             fmt_chg(m["one_week_chg"]),
-            Text(fmt_vol(m["volume"]), style="yellow"),
+            Text(fmt_vol(m.get("volume_1w") or 0), style="yellow"),
             direction,
         )
 
@@ -843,23 +940,21 @@ def export_to_image(
     banner = f"POLYMARKET SCREENER — {label}"
     saved = []
 
-    # ── Table 1: Top Movers 24H ────────────────────────────────────────────────
+    # ── Table 1: Top Movers 24H (velocity scored) ──────────────────────────────
     movers = [
         m for m in markets
         if abs(m["one_day_chg"]) > 0.001
         and 0.02 <= m["yes"] <= 0.98
-        and m["volume"] >= 500_000
+        and m["volume"] >= config.SCREENER_MIN_VOLUME
     ]
-    movers_sorted = sorted(movers, key=lambda m: abs(m["one_day_chg"]), reverse=True)[:15]
-    mover_headers = ["#", "Market", "YES", "NO", "1D Chg", "7D Chg", "Volume", "Dir"]
-    mover_widths = [35, 420, 70, 70, 80, 80, 90, 65]
+    movers_sorted = sorted(movers, key=_velocity_score_1d, reverse=True)[:15]
+    mover_headers = ["#", "Market", "YES", "NO", "1D Chg", "1D Vol", "Total", "Dir"]
+    mover_widths = [35, 420, 70, 70, 80, 90, 90, 65]
 
     mover_rows = []
     for i, m in enumerate(movers_sorted, 1):
         chg_1d = m["one_day_chg"]
         chg_1d_color = "green" if chg_1d > 0 else "red"
-        chg_7d = m["one_week_chg"]
-        chg_7d_color = "green" if chg_7d > 0 else "red" if chg_7d < 0 else "dim"
         dir_text = "YES ↑" if chg_1d > 0 else "NO ↑"
         dir_color = "green" if chg_1d > 0 else "red"
 
@@ -869,37 +964,35 @@ def export_to_image(
             (fmt_pct(m["yes"]), "text"),
             (fmt_pct(m["no"]), "text"),
             (fmt_chg_plain(chg_1d), chg_1d_color),
-            (fmt_chg_plain(chg_7d), chg_7d_color),
+            (fmt_vol(m.get("volume_1d") or 0), "yellow"),
             (fmt_vol(m["volume"]), "yellow"),
             (dir_text, dir_color),
         ])
 
     if mover_rows:
         path = _render_single_table(
-            banner, "TOP MOVERS 24H (PRICE CHANGE)",
+            banner, "TOP MOVERS 24H (VELOCITY: CHANGE x VOLUME)",
             mover_headers, mover_rows, mover_widths,
             timestamp, f"{output_prefix}_movers_24h.jpg",
         )
         if path:
             saved.append(path)
 
-    # ── Table 2: Top Movers 7D ──────────────────────────────────────────────
+    # ── Table 2: Top Movers 7D (velocity scored) ─────────────────────────────
     movers_7d = [
         m for m in markets
         if abs(m["one_week_chg"]) > 0.001
         and 0.02 <= m["yes"] <= 0.98
-        and m["volume"] >= 500_000
+        and m["volume"] >= config.SCREENER_MIN_VOLUME
     ]
-    movers_7d_sorted = sorted(movers_7d, key=lambda m: abs(m["one_week_chg"]), reverse=True)[:15]
-    mover_7d_headers = ["#", "Market", "YES", "NO", "7D Chg", "1D Chg", "Volume", "Dir"]
-    mover_7d_widths = [35, 420, 70, 70, 80, 80, 90, 65]
+    movers_7d_sorted = sorted(movers_7d, key=_velocity_score_7d, reverse=True)[:15]
+    mover_7d_headers = ["#", "Market", "YES", "NO", "7D Chg", "7D Vol", "Total", "Dir"]
+    mover_7d_widths = [35, 420, 70, 70, 80, 90, 90, 65]
 
     mover_7d_rows = []
     for i, m in enumerate(movers_7d_sorted, 1):
         chg_7d = m["one_week_chg"]
         chg_7d_color = "green" if chg_7d > 0 else "red"
-        chg_1d = m["one_day_chg"]
-        chg_1d_color = "green" if chg_1d > 0 else "red" if chg_1d < 0 else "dim"
         dir_text = "YES ↑" if chg_7d > 0 else "NO ↑"
         dir_color = "green" if chg_7d > 0 else "red"
 
@@ -909,19 +1002,27 @@ def export_to_image(
             (fmt_pct(m["yes"]), "text"),
             (fmt_pct(m["no"]), "text"),
             (fmt_chg_plain(chg_7d), chg_7d_color),
-            (fmt_chg_plain(chg_1d), chg_1d_color),
+            (fmt_vol(m.get("volume_1w") or 0), "yellow"),
             (fmt_vol(m["volume"]), "yellow"),
             (dir_text, dir_color),
         ])
 
     if mover_7d_rows:
         path = _render_single_table(
-            banner, "TOP MOVERS 7D (PRICE CHANGE)",
+            banner, "TOP MOVERS 7D (VELOCITY: CHANGE x VOLUME)",
             mover_7d_headers, mover_7d_rows, mover_7d_widths,
             timestamp, f"{output_prefix}_movers_7d.jpg",
         )
         if path:
             saved.append(path)
+
+    # Track shown markets for repeat deprioritization
+    shown_slugs = []
+    for m in movers_sorted + movers_7d_sorted:
+        slug = m.get("slug", m["title"])
+        if slug not in shown_slugs:
+            shown_slugs.append(slug)
+    _save_shown_markets(shown_slugs)
 
     # ── Table 3: Top Markets by 7D Volume ────────────────────────────────────
     vol_sorted = sorted(markets, key=lambda m: m["volume_1w"], reverse=True)[:15]
@@ -1131,7 +1232,7 @@ def main():
     save_img = "--img" in args
     debug_api = "--debug-api" in args
     interval = 60
-    min_vol = 0.0
+    min_vol = config.SCREENER_MIN_VOLUME
     tag_slug = None
     exclude_tags = None
 
